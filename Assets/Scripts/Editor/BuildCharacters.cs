@@ -3,106 +3,129 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
 using UnityEditor;
 using UnityEngine;
 
 public class BuildCharacters : EditorWindow
 {
-    static string pattern = @"
-a i u e o
-ka ki ku ke ko
-ga gi gu ge go
-sa shi su se so
-za ji zu ze zo
-ta chi tsu te to
-da dji du de do
-ha hi fu he ho
-ba bi bu be bo
-pa pi pu pe po
-ma mi mu me mo
-ya yu yo
-ra ri ru re ro
-wa wo n
-";
+    static string groupsFile = "Assets/Data/CharGroups.txt";
 
     static string parentFolder = "Assets/Data/Characters";
 
     [MenuItem("MemoryKana/Build Characters")]
     public static void BuildCharacter()
     {
+        var groupsTXT = AssetDatabase.LoadAssetAtPath<TextAsset>(groupsFile);
+
         List<Character> characters = new List<Character>();
-        var groups = pattern.Split(Environment.NewLine);
+        List<CharactersGroup> charactersGroups = new List<CharactersGroup>();
+
+        var groups = groupsTXT.text.Split(Environment.NewLine);
         int groupID = 0;
         string groupIDString = "";
-        int charIDInGroup = 0;
+        string groupName;
+        string groupFolderPath;
+        string groupSOPath;
+        CharactersGroup groupSO = null;
 
-        foreach( var group in groups )
+        int charIDInGroup = 0;
+        string[] splits;
+        string charPath = "";
+        string ro, hi, ka;
+        Character charSO = null;
+        StringBuilder jpnCharListSB = new StringBuilder();
+
+        foreach (var group in groups)
         {
-            if (string.IsNullOrEmpty( group ) )
+            if (string.IsNullOrEmpty(group))
                 continue;
 
-            var romajis = group.Split(" "[0]);
-
             groupIDString = groupID.ToString("D2");
-            var groupName = $"{groupIDString}_{romajis[0]}";
-            groupID++;
-            var groupPath = Path.Combine(parentFolder, groupName);
 
-            if (!AssetDatabase.IsValidFolder(groupPath))
-                AssetDatabase.CreateFolder(parentFolder, groupName);
+            splits = group.Split(","[0]);
 
-            charIDInGroup = 0;
-            var newChars = romajis
-                .Select(s => {
-                    var path = Path.Combine(groupPath, $"{groupIDString}_{charIDInGroup}_{s}.asset");
-                    charIDInGroup++;
-                    Character so = null;
-
-                    bool needCreateAsset = false;
-
-                    if (string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(path)))
-                    {
-                        needCreateAsset = true;
-                    }
-                    else
-                    {
-                        so = AssetDatabase.LoadAssetAtPath<Character>(path);
-                        needCreateAsset = so == null;
-                    }
-
-                    if (needCreateAsset)
-                    {
-                        so = ScriptableObject.CreateInstance<Character>();
-                        AssetDatabase.CreateAsset(so, path);
-                    }
-
-                    so.romaji = s;
-                    return so;
-                })
-                .ToList();
-            characters.AddRange(newChars);
-        }
-
-        string charList = AssetDatabase.LoadAssetAtPath<TextAsset>("Assets/TextMesh Pro/Fonts/JPN_chars_list.txt").text;
-        int c = 0;
-
-        for (int j = 0; j<2; j++)
-            for (int i = 0 ; i < characters.Count; i++)
+            if ((splits.Length % 3) != 0 )
             {
-                while (char.IsWhiteSpace(charList[c]) && c < charList.Length )
-                    c++;
-
-                if (j == 0)
-                    characters[i].hiragana = charList[c];
-                else
-                {
-                    characters[i].katakana = charList[c];
-                    EditorUtility.SetDirty(characters[i] );
-                }
-
-                c++;
+                Debug.LogError("Wrong number of characters for group");
             }
 
+            groupName = $"{groupIDString}_{splits[0]}";
+            groupID++;
+            groupFolderPath = Path.Combine(parentFolder, groupName);
+
+
+            if (!AssetDatabase.IsValidFolder(groupFolderPath))
+                AssetDatabase.CreateFolder(parentFolder, groupName);
+
+            groupSOPath = Path.Combine(groupFolderPath, $"{groupName}_grp.asset");
+            groupSO = SafeLoadOrCreateSOAsset<CharactersGroup>(groupSOPath);
+            groupSO.characters.Clear();
+
+            charIDInGroup = 0;
+
+            for (int i = 0; i < splits.Length; i += 3)
+            {
+                ro = splits[i];
+                hi = splits[i + 1];
+                ka = splits[i + 2];
+
+                charPath = Path.Combine(groupFolderPath, $"{groupIDString}_{charIDInGroup}_{ro}.asset");
+                charIDInGroup++;
+
+                charSO = SafeLoadOrCreateSOAsset<Character>(charPath);
+
+                charSO.romaji = ro;
+                charSO.hiragana = hi[0];
+                charSO.katakana = ka[0];
+
+                characters.Add(charSO);
+                groupSO.characters.Add(charSO);
+
+                jpnCharListSB.Append(hi);
+                jpnCharListSB.Append(ka);
+
+                EditorUtility.SetDirty(charSO);
+                AssetDatabase.SaveAssetIfDirty(charSO);
+            }
+
+            EditorUtility.SetDirty(groupSO);
+            AssetDatabase.SaveAssetIfDirty(groupSO);
+        }
+
+        string charListPath = "TextMesh Pro/Fonts/JPN_chars_list.txt";
+
+        System.IO.File.WriteAllText(
+            Path.Combine(Application.dataPath, charListPath),
+            jpnCharListSB.ToString()
+            );
+
         AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+    }
+
+    public static T SafeLoadOrCreateSOAsset<T>(string path) where T : ScriptableObject
+    {
+        bool needCreateAsset = false;
+        T obj = null;
+
+        if (string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(path)))
+        {
+            needCreateAsset = true;
+        }
+        else
+        {
+            obj = AssetDatabase.LoadAssetAtPath<T>(path);
+            needCreateAsset = obj == null;
+        }
+
+        if (needCreateAsset)
+        {
+            obj = CreateInstance<T>();
+            AssetDatabase.CreateAsset(obj, path);
+        }
+
+        return obj;
     }
 }
